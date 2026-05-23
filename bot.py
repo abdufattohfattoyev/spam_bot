@@ -9,7 +9,7 @@ from telegram.ext import (
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
-    level=logging.INFO
+    level=logging.DEBUG
 )
 logger = logging.getLogger(__name__)
 
@@ -30,22 +30,16 @@ STRONG_PHRASES = [
 ]
 
 SPAM_KEYWORDS = [
-    # narx / to'lov
     "narxi", "mahsulot", "to'lov", "tolov",
     "qo'lingizga", "qolingizga",
-    # xizmat
     "xizmat mavjud", "xizmati mavjud", "berish xizmati",
-    # mahsulot turlari
     "krossovka", "oyoq kiyim", "ximchistka", "avtoximchistka",
-    # savdo so'zlari
     "chegirma", "aksiya", "optom", "ulgurji",
     "olish mumkin", "zakaz", "dostavka", "sotiladi", "sotamiz",
-    # komplekt / tavsif
     "komplektatsiya", "asosiy xususiyatlar",
 ]
 
 URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
-# so'm — turli tutuq belgi variantlarini qamrab oladi: ' ʻ '
 PRICE_RE = re.compile(r"\d[\d\s]{2,}(?:so[ʻ''']?m|sum|uzs)", re.IGNORECASE)
 PHONE_RE = re.compile(r"(\+998|998|8)[\s\-]?\d{2}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}")
 
@@ -57,62 +51,80 @@ def spam_score(text: str) -> int:
     score = 0
     lower = text.lower()
 
-    # Kuchli belgilar — bittasi yetarli
     for phrase in STRONG_PHRASES:
         if phrase in lower:
             score += 4
+            logger.debug("Kuchli belgi: '%s'", phrase)
 
     if URL_RE.search(text):
         score += 2
+        logger.debug("URL topildi")
     if PRICE_RE.search(text):
         score += 2
+        logger.debug("Narx topildi")
     if PHONE_RE.search(text):
         score += 1
+        logger.debug("Telefon topildi")
 
-    score += sum(1 for kw in SPAM_KEYWORDS if kw in lower)
+    kw_hits = [kw for kw in SPAM_KEYWORDS if kw in lower]
+    score += len(kw_hits)
+    if kw_hits:
+        logger.debug("Kalit so'zlar: %s", kw_hits)
 
     if sum(1 for c in text if ord(c) > 0x1F300) >= 4:
         score += 1
+        logger.debug("Ko'p emoji")
 
     if text.count("--") >= 3 or text.count("- ") >= 5:
         score += 2
+        logger.debug("Narxlar ro'yxati")
 
     return score
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
-    if not msg or not msg.text:
+    if not msg:
+        logger.debug("Message yo'q, o'tkazildi")
+        return
+    if not msg.text:
+        logger.debug("Matnsiz xabar (rasm/fayl), o'tkazildi")
         return
 
-    # Faqat belgilangan guruhda ishlaydi
+    logger.debug("Xabar keldi | chat_id=%d | chat_type=%s", msg.chat.id, msg.chat.type)
+
     if msg.chat.id != GROUP_ID:
+        logger.debug("Boshqa chat | kelgan=%d | kerak=%d", msg.chat.id, GROUP_ID)
         return
 
     user = msg.from_user
     if user.is_bot:
+        logger.debug("Bot xabari, o'tkazildi")
         return
 
-    # Guruh adminlarini tekshirish
     try:
         member = await context.bot.get_chat_member(msg.chat.id, user.id)
         if member.status in ("administrator", "creator"):
+            logger.debug("Admin xabari, o'tkazildi | %s", user.full_name)
             return
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Admin tekshiruvi xatosi: %s", e)
 
+    logger.debug("--- Tekshirilmoqda | %s (@%s) ---", user.full_name, user.username)
     score = spam_score(msg.text)
-    logger.debug("Score=%d | %s [%d] | %s", score, user.full_name, user.id, msg.text[:80])
+    logger.info("Ball=%d | %s (@%s) [%d] | %.80s", score, user.full_name, user.username, user.id, msg.text)
+
     if score < 3:
+        logger.debug("Ball yetmadi (%d < 3)", score)
         return
 
-    logger.info("Spam (score=%d) | %s (@%s) [%d]", score, user.full_name, user.username, user.id)
+    logger.info("SPAM | ball=%d | %s (@%s) [%d]", score, user.full_name, user.username, user.id)
 
     try:
         await msg.delete()
-        logger.info("Xabar o'chirildi: %s [%d]", user.full_name, user.id)
+        logger.info("O'chirildi | %s [%d]", user.full_name, user.id)
     except Exception as e:
-        logger.warning("O'chira olmadi: %s", e)
+        logger.error("O'chira olmadi: %s", e)
         return
 
     if ADMIN_ID:
@@ -122,12 +134,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🗑 <b>Xabar o'chirildi</b>\n\n"
                 f"👤 {user.full_name} (@{user.username or '-'})\n"
                 f"🆔 <code>{user.id}</code>\n"
-                f"📊 Spam ball: {score}\n\n"
+                f"📊 Ball: {score}\n\n"
                 f"📝 Xabar:\n{msg.text[:500]}",
                 parse_mode="HTML",
             )
         except Exception as e:
-            logger.warning("Admin xabari yuborilmadi: %s", e)
+            logger.error("Admin xabari yuborilmadi: %s", e)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -135,7 +147,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(
         f"✅ <b>Spam Blocker Bot</b> ishlamoqda!\n\n"
-        f"👁 Kuzatilayotgan guruh ID: <code>{GROUP_ID}</code>\n\n"
+        f"👁 Guruh ID: <code>{GROUP_ID}</code>\n\n"
         f"Reklama aniqlanganda:\n"
         f"• Xabar o'chiriladi\n"
         f"• Faqat sizga bildirish keladi",
@@ -144,7 +156,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin foydalanuvchini unban qiladi: /unban 123456789"""
     if update.effective_user.id != ADMIN_ID:
         return
     if not context.args:
