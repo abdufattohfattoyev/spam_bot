@@ -17,16 +17,24 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 GROUP_ID = int(os.getenv("GROUP_ID", "0"))
 
+# Bitta bo'lsa ham yetarli — har biri +4 ball
+STRONG_PHRASES = [
+    "yetqazib berish",
+    "yetkazib berish",
+    "buyurtma berish",
+    "buyurtma qilish",
+    "mahsulot narxi",
+    "to'lovni mahsulotni",
+    "100k.uz",
+    "olcha.uz",
+]
+
 SPAM_KEYWORDS = [
     # narx / to'lov
-    "narxi", "buyurtma", "mahsulot", "to'lov", "tolov",
+    "narxi", "mahsulot", "to'lov", "tolov",
     "qo'lingizga", "qolingizga",
-    # yetkazib (ikki xil imlo)
-    "yetqazib", "yetkazib",
     # xizmat
     "xizmat mavjud", "xizmati mavjud", "berish xizmati",
-    "bo'ylab yetkazib", "boylab yetkazib",
-    "bo'ylab yetqazib", "boylab yetqazib",
     # mahsulot turlari
     "krossovka", "oyoq kiyim", "ximchistka", "avtoximchistka",
     # savdo so'zlari
@@ -48,6 +56,11 @@ def spam_score(text: str) -> int:
 
     score = 0
     lower = text.lower()
+
+    # Kuchli belgilar — bittasi yetarli
+    for phrase in STRONG_PHRASES:
+        if phrase in lower:
+            score += 4
 
     if URL_RE.search(text):
         score += 2
