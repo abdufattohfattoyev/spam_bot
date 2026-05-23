@@ -117,7 +117,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     mtype = msg_type(msg)
     text = get_text(msg)
-    is_forwarded = bool(msg.forward_date)
+    is_forwarded = msg.forward_origin is not None
 
     logger.debug("Xabar | type=%s | forward=%s | text_len=%d",
                  mtype, is_forwarded, len(text))
