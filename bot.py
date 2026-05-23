@@ -1,7 +1,7 @@
 import os
 import re
 import logging
-from telegram import Update
+from telegram import Update, Message
 from telegram.ext import (
     Application, MessageHandler, CommandHandler,
     filters, ContextTypes
@@ -41,6 +41,32 @@ SPAM_KEYWORDS = [
 URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
 PRICE_RE = re.compile(r"\d[\d\s]{2,}(?:so[ʻ''']?m|sum|uzs)", re.IGNORECASE)
 PHONE_RE = re.compile(r"(\+998|998|8)[\s\-]?\d{2}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}")
+
+
+def get_text(msg: Message) -> str:
+    """Xabardan matnni oladi: text, caption yoki ikkalasi."""
+    parts = []
+    if msg.text:
+        parts.append(msg.text)
+    if msg.caption:
+        parts.append(msg.caption)
+    return " ".join(parts)
+
+
+def msg_type(msg: Message) -> str:
+    if msg.photo:
+        return "photo"
+    if msg.video:
+        return "video"
+    if msg.document:
+        return "document"
+    if msg.animation:
+        return "gif"
+    if msg.sticker:
+        return "sticker"
+    if msg.text:
+        return "text"
+    return "other"
 
 
 def spam_score(text: str) -> int:
@@ -86,47 +112,51 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg:
         return
 
-    text = msg.text or msg.caption
-    if not text:
-        return
-
     if msg.chat.id != GROUP_ID:
-        logger.debug("Boshqa chat | kelgan=%d | kerak=%d", msg.chat.id, GROUP_ID)
         return
 
+    mtype = msg_type(msg)
+    text = get_text(msg)
     is_forwarded = bool(msg.forward_date)
-    logger.debug("Xabar | chat_id=%d | forward=%s", msg.chat.id, is_forwarded)
 
-    # from_user None bo'lishi mumkin (kanal orqali uzatilganda)
+    logger.debug("Xabar | type=%s | forward=%s | text_len=%d",
+                 mtype, is_forwarded, len(text))
+
+    if not text:
+        logger.debug("Matn yo'q (%s), o'tkazildi", mtype)
+        return
+
+    # from_user None bo'lishi mumkin (kanal yoki anonim admin)
     user = msg.from_user
-    sender_name = user.full_name if user else "Kanal/Noma'lum"
-    sender_id = user.id if user else 0
-    sender_username = user.username if user else None
+    sender_chat = msg.sender_chat
 
     if user and user.is_bot:
-        logger.debug("Bot xabari, o'tkazildi")
         return
 
-    # Faqat haqiqiy foydalanuvchilar uchun admin tekshiruvi
+    # Admin tekshiruvi faqat oddiy foydalanuvchilar uchun
     if user:
         try:
             member = await context.bot.get_chat_member(msg.chat.id, user.id)
             if member.status in ("administrator", "creator"):
-                logger.debug("Admin xabari, o'tkazildi | %s", user.full_name)
+                logger.debug("Admin, o'tkazildi | %s", user.full_name)
                 return
         except Exception as e:
             logger.warning("Admin tekshiruvi xatosi: %s", e)
 
+    sender_name = (user.full_name if user else
+                   (sender_chat.title if sender_chat else "Noma'lum"))
+    sender_id = user.id if user else 0
+    sender_username = user.username if user else None
+
     score = spam_score(text)
-    logger.info("Ball=%d | %s [%d] | forward=%s | %.80s",
-                score, sender_name, sender_id, is_forwarded, text)
+    logger.info("Ball=%d | type=%s | forward=%s | %s [%d] | %.80s",
+                score, mtype, is_forwarded, sender_name, sender_id, text)
 
     if score < 3:
-        logger.debug("Ball yetmadi (%d < 3)", score)
         return
 
-    logger.info("SPAM topildi | ball=%d | %s [%d] | forward=%s",
-                score, sender_name, sender_id, is_forwarded)
+    logger.info("SPAM | ball=%d | type=%s | %s [%d]",
+                score, mtype, sender_name, sender_id)
 
     try:
         await msg.delete()
@@ -138,14 +168,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ADMIN_ID:
         try:
             forward_note = "📨 <b>Uzatilgan xabar</b>\n" if is_forwarded else ""
+            type_note = {"photo": "🖼 Rasm", "video": "🎥 Video",
+                         "document": "📎 Fayl", "gif": "🎞 GIF",
+                         "text": "💬 Matn"}.get(mtype, mtype)
             await context.bot.send_message(
                 ADMIN_ID,
                 f"🗑 <b>Xabar o'chirildi</b>\n\n"
                 f"{forward_note}"
+                f"📌 Tur: {type_note}\n"
                 f"👤 {sender_name} (@{sender_username or '-'})\n"
                 f"🆔 <code>{sender_id}</code>\n"
                 f"📊 Ball: {score}\n\n"
-                f"📝 Xabar:\n{text[:500]}",
+                f"📝 Matn:\n{text[:500]}",
                 parse_mode="HTML",
             )
         except Exception as e:
@@ -158,9 +192,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"✅ <b>Spam Blocker Bot</b> ishlamoqda!\n\n"
         f"👁 Guruh ID: <code>{GROUP_ID}</code>\n\n"
-        f"Reklama aniqlanganda:\n"
-        f"• Xabar o'chiriladi\n"
-        f"• Faqat sizga bildirish keladi",
+        f"Qo'llab-quvvatlanadi:\n"
+        f"• 💬 Matnli xabarlar\n"
+        f"• 🖼 Rasm + izoh\n"
+        f"• 🎥 Video + izoh\n"
+        f"• 📨 Uzatilgan xabarlar",
         parse_mode="HTML",
     )
 
@@ -188,10 +224,7 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("unban", unban))
-    app.add_handler(MessageHandler(
-        ~filters.COMMAND,
-        handle_message
-    ))
+    app.add_handler(MessageHandler(~filters.COMMAND, handle_message))
 
     logger.info("Bot ishga tushdi | Guruh: %d", GROUP_ID)
     app.run_polling(drop_pending_updates=True)
