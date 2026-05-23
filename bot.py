@@ -18,15 +18,27 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 GROUP_ID = int(os.getenv("GROUP_ID", "0"))
 
 SPAM_KEYWORDS = [
-    "so'm", "narxi", "yetqazib", "buyurtma", "mahsulot",
-    "krossovka", "oyoq kiyim", "to'lov", "qo'lingizga",
-    "xizmat mavjud", "bo'ylab yetkazib", "berish xizmati",
-    "chegirma", "aksiya", "optom", "ulgurji", "olish mumkin",
-    "zakaz", "dostavka"
+    # narx / to'lov
+    "narxi", "buyurtma", "mahsulot", "to'lov", "tolov",
+    "qo'lingizga", "qolingizga",
+    # yetkazib (ikki xil imlo)
+    "yetqazib", "yetkazib",
+    # xizmat
+    "xizmat mavjud", "xizmati mavjud", "berish xizmati",
+    "bo'ylab yetkazib", "boylab yetkazib",
+    "bo'ylab yetqazib", "boylab yetqazib",
+    # mahsulot turlari
+    "krossovka", "oyoq kiyim", "ximchistka", "avtoximchistka",
+    # savdo so'zlari
+    "chegirma", "aksiya", "optom", "ulgurji",
+    "olish mumkin", "zakaz", "dostavka", "sotiladi", "sotamiz",
+    # komplekt / tavsif
+    "komplektatsiya", "asosiy xususiyatlar",
 ]
 
 URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
-PRICE_RE = re.compile(r"\d[\d\s]{2,}(?:so'?m|sum|uzs)", re.IGNORECASE)
+# so'm — turli tutuq belgi variantlarini qamrab oladi: ' ʻ '
+PRICE_RE = re.compile(r"\d[\d\s]{2,}(?:so[ʻ''']?m|sum|uzs)", re.IGNORECASE)
 PHONE_RE = re.compile(r"(\+998|998|8)[\s\-]?\d{2}[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}")
 
 
@@ -77,6 +89,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
     score = spam_score(msg.text)
+    logger.debug("Score=%d | %s [%d] | %s", score, user.full_name, user.id, msg.text[:80])
     if score < 3:
         return
 
