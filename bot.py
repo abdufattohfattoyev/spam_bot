@@ -87,11 +87,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg:
         logger.debug("Message yo'q, o'tkazildi")
         return
-    if not msg.text:
-        logger.debug("Matnsiz xabar (rasm/fayl), o'tkazildi")
+
+    # Matn yoki caption (rasm/video izoh) — ikkalasini tekshiramiz
+    text = msg.text or msg.caption
+    if not text:
+        logger.debug("Matnsiz va capionsiz xabar, o'tkazildi")
         return
 
-    logger.debug("Xabar keldi | chat_id=%d | chat_type=%s", msg.chat.id, msg.chat.type)
+    logger.debug("Xabar keldi | chat_id=%d | chat_type=%s | forward=%s",
+                 msg.chat.id, msg.chat.type, bool(msg.forward_date))
 
     if msg.chat.id != GROUP_ID:
         logger.debug("Boshqa chat | kelgan=%d | kerak=%d", msg.chat.id, GROUP_ID)
@@ -110,9 +114,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.warning("Admin tekshiruvi xatosi: %s", e)
 
-    logger.debug("--- Tekshirilmoqda | %s (@%s) ---", user.full_name, user.username)
-    score = spam_score(msg.text)
-    logger.info("Ball=%d | %s (@%s) [%d] | %.80s", score, user.full_name, user.username, user.id, msg.text)
+    logger.debug("--- Tekshirilmoqda | %s (@%s) | forward=%s ---",
+                 user.full_name, user.username, bool(msg.forward_date))
+    score = spam_score(text)
+    logger.info("Ball=%d | %s (@%s) [%d] | %.80s", score, user.full_name, user.username, user.id, text)
 
     if score < 3:
         logger.debug("Ball yetmadi (%d < 3)", score)
@@ -134,8 +139,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🗑 <b>Xabar o'chirildi</b>\n\n"
                 f"👤 {user.full_name} (@{user.username or '-'})\n"
                 f"🆔 <code>{user.id}</code>\n"
-                f"📊 Ball: {score}\n\n"
-                f"📝 Xabar:\n{msg.text[:500]}",
+                f"📊 Ball: {score}\n"
+                f"{'📨 Uzatilgan xabar' if msg.forward_date else ''}\n\n"
+                f"📝 Xabar:\n{text[:500]}",
                 parse_mode="HTML",
             )
         except Exception as e:
@@ -178,7 +184,11 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("unban", unban))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    # Matnli xabarlar + rasm/video caption li xabarlar
+    app.add_handler(MessageHandler(
+        (filters.TEXT & ~filters.COMMAND) | filters.CAPTION,
+        handle_message
+    ))
 
     logger.info("Bot ishga tushdi | Guruh: %d", GROUP_ID)
     app.run_polling(drop_pending_updates=True)
