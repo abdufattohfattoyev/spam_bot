@@ -17,7 +17,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 GROUP_ID = int(os.getenv("GROUP_ID", "0"))
 
-# Bitta bo'lsa ham yetarli — har biri +4 ball
 STRONG_PHRASES = [
     "yetqazib berish",
     "yetkazib berish",
@@ -85,62 +84,67 @@ def spam_score(text: str) -> int:
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg:
-        logger.debug("Message yo'q, o'tkazildi")
         return
 
-    # Matn yoki caption (rasm/video izoh) — ikkalasini tekshiramiz
     text = msg.text or msg.caption
     if not text:
-        logger.debug("Matnsiz va capionsiz xabar, o'tkazildi")
         return
-
-    logger.debug("Xabar keldi | chat_id=%d | chat_type=%s | forward=%s",
-                 msg.chat.id, msg.chat.type, bool(msg.forward_date))
 
     if msg.chat.id != GROUP_ID:
         logger.debug("Boshqa chat | kelgan=%d | kerak=%d", msg.chat.id, GROUP_ID)
         return
 
+    is_forwarded = bool(msg.forward_date)
+    logger.debug("Xabar | chat_id=%d | forward=%s", msg.chat.id, is_forwarded)
+
+    # from_user None bo'lishi mumkin (kanal orqali uzatilganda)
     user = msg.from_user
-    if user.is_bot:
+    sender_name = user.full_name if user else "Kanal/Noma'lum"
+    sender_id = user.id if user else 0
+    sender_username = user.username if user else None
+
+    if user and user.is_bot:
         logger.debug("Bot xabari, o'tkazildi")
         return
 
-    try:
-        member = await context.bot.get_chat_member(msg.chat.id, user.id)
-        if member.status in ("administrator", "creator"):
-            logger.debug("Admin xabari, o'tkazildi | %s", user.full_name)
-            return
-    except Exception as e:
-        logger.warning("Admin tekshiruvi xatosi: %s", e)
+    # Faqat haqiqiy foydalanuvchilar uchun admin tekshiruvi
+    if user:
+        try:
+            member = await context.bot.get_chat_member(msg.chat.id, user.id)
+            if member.status in ("administrator", "creator"):
+                logger.debug("Admin xabari, o'tkazildi | %s", user.full_name)
+                return
+        except Exception as e:
+            logger.warning("Admin tekshiruvi xatosi: %s", e)
 
-    logger.debug("--- Tekshirilmoqda | %s (@%s) | forward=%s ---",
-                 user.full_name, user.username, bool(msg.forward_date))
     score = spam_score(text)
-    logger.info("Ball=%d | %s (@%s) [%d] | %.80s", score, user.full_name, user.username, user.id, text)
+    logger.info("Ball=%d | %s [%d] | forward=%s | %.80s",
+                score, sender_name, sender_id, is_forwarded, text)
 
     if score < 3:
         logger.debug("Ball yetmadi (%d < 3)", score)
         return
 
-    logger.info("SPAM | ball=%d | %s (@%s) [%d]", score, user.full_name, user.username, user.id)
+    logger.info("SPAM topildi | ball=%d | %s [%d] | forward=%s",
+                score, sender_name, sender_id, is_forwarded)
 
     try:
         await msg.delete()
-        logger.info("O'chirildi | %s [%d]", user.full_name, user.id)
+        logger.info("O'chirildi | %s [%d]", sender_name, sender_id)
     except Exception as e:
         logger.error("O'chira olmadi: %s", e)
         return
 
     if ADMIN_ID:
         try:
+            forward_note = "📨 <b>Uzatilgan xabar</b>\n" if is_forwarded else ""
             await context.bot.send_message(
                 ADMIN_ID,
                 f"🗑 <b>Xabar o'chirildi</b>\n\n"
-                f"👤 {user.full_name} (@{user.username or '-'})\n"
-                f"🆔 <code>{user.id}</code>\n"
-                f"📊 Ball: {score}\n"
-                f"{'📨 Uzatilgan xabar' if msg.forward_date else ''}\n\n"
+                f"{forward_note}"
+                f"👤 {sender_name} (@{sender_username or '-'})\n"
+                f"🆔 <code>{sender_id}</code>\n"
+                f"📊 Ball: {score}\n\n"
                 f"📝 Xabar:\n{text[:500]}",
                 parse_mode="HTML",
             )
@@ -184,9 +188,8 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("unban", unban))
-    # Matnli xabarlar + rasm/video caption li xabarlar
     app.add_handler(MessageHandler(
-        (filters.TEXT & ~filters.COMMAND) | filters.CAPTION,
+        ~filters.COMMAND,
         handle_message
     ))
 
